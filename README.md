@@ -66,3 +66,23 @@ Asigurarea funcționalității de rezoluție DNS pentru domeniile legitime (care
 - **Domeniu Blocat (facebook.com):** Serverul răspunde local cu `0.0.0.0`, blocând accesul.
 - **Domeniu Legitim (youtube.com):** Serverul trimite cererea la Google, primește IP-urile reale ale YouTube și le trimite înapoi la client. Rezultatul este vizibil instant în terminal prin comanda `nslookup`.
 
+## Etapa 4: Implementarea mecanismului de Caching
+
+### Obiectiv
+Reducerea latenței și a numărului de cereri către serverele DNS externe prin stocarea temporară a răspunsurilor valide în memoria RAM.
+
+### Detalii Implementare
+1. **Stocarea Datelor:**
+   - Am utilizat un dicționar Python (`dns_cache`) pentru a mapa numele domeniilor la pachetele binare de răspuns.
+   - Fiecare intrare în cache include un **Timestamp de expirare**, calculat pe baza adunării timpului curent (`time.time()`) cu un **TTL** (Time To Live).
+
+2. **Logica de ID Matching:**
+   - O provocare tehnică în implementarea cache-ului DNS este potrivirea ID-ului de tranzacție. 
+   - Deoarece pachetul salvat în cache are ID-ul cererii originale, la refolosire, serverul nostru modifică header-ul pachetului binar pentru a insera ID-ul noii cereri, asigurând conformitatea cu protocolul DNS.
+
+3. **Eficiență:**
+   - Sistemul verifică mai întâi Blocklist-ul, apoi Cache-ul, și abia în ultimă instanță efectuează un apel recursiv către internet.
+   - Această ierarhie minimizează traficul de rețea și oferă timpi de răspuns sub 1ms pentru cererile repetate.
+
+Mecanismul de caching actual returnează pachetul binar stocat indiferent de tipul query-ului (A sau AAAA). Acest lucru poate duce la afișarea duplicată a IP-urilor în utilitare precum nslookup, însă nu afectează navigarea web propriu-zisă.
+

@@ -1,4 +1,5 @@
 import socket
+import time
 from dnslib import DNSRecord, QTYPE, RR, A
 
 # 1. Încărcăm lista de domenii blocate
@@ -18,6 +19,29 @@ def load_blocklist():
     return blocklist
 
 blocked_domains = load_blocklist()
+
+
+# 1. Structura pentru Cache
+# Format: { "domeniu": (pachet_binar, timestamp_expirare) }
+dns_cache = {}
+
+def get_from_cache(domain):
+    """Căutăm domeniul în cache și verificăm dacă a expirat"""
+    if domain in dns_cache:
+        answer, expiry = dns_cache[domain]
+        if time.time() < expiry:
+            print(f"[CACHE] Răspuns servit din memorie pentru: {domain}")
+            return answer
+        else:
+            print(f"[CACHE] Record expirat pentru: {domain}")
+            del dns_cache[domain]
+    return None
+
+def add_to_cache(domain, data, ttl=60):
+    """Salvăm răspunsul în cache pentru un număr de secunde (implicit 60)"""
+    expiry = time.time() + ttl
+    dns_cache[domain] = (data, expiry)
+    print(f"[CACHE] Salvat în cache: {domain} (TTL: {ttl}s)")
 
 
 def ask_upstream(data):
@@ -40,35 +64,35 @@ def ask_upstream(data):
 
 
 def handle_dns_request(data, addr, sock):
-    # Parsăm pachetul binar primit
     request = DNSRecord.parse(data)
-    # Extragem numele domeniului (ex: google.com.) și scoatem punctul final
     domain = str(request.q.qname).strip(".")
     
-    print(f"[QUERY] Cerere pentru: {domain}")
-
-    # 2. Verificăm dacă domeniul este în lista neagră
+    # Pasul 1: Verificăm Blocklist
     if domain.lower() in blocked_domains:
-        print(f"[BLOCKED] Domeniu blocat: {domain}")
-        
-        # Construim răspunsul DNS cu IP-ul 0.0.0.0
+        print(f"[BLOCKED] {domain} -> 0.0.0.0")
         reply = request.reply()
-        # RR = Resource Record, A = Adresă IPv4
         reply.add_answer(RR(rname=request.q.qname, rtype=QTYPE.A, rclass=1, ttl=60, rdata=A("0.0.0.0")))
-        
-        # Trimitem pachetul binar înapoi la client
         sock.sendto(reply.pack(), addr)
-    else:
-        # --- AICI ESTE MODIFICAREA ---
-        print(f"[PASS] {domain} -> Întrebăm Google DNS...")
-        
-        # Facem cererea recursivă
-        actual_answer = ask_upstream(data)
-        
-        if actual_answer:
-            # Trimitem răspunsul primit de la Google direct înapoi la client
-            sock.sendto(actual_answer, addr)
-        # -----------------------------
+        return
+
+    # Pasul 2: Verificăm Cache
+    cached_response = get_from_cache(domain)
+    if cached_response:
+        # Trebuie să modificăm ID-ul pachetului din cache pentru a se potrivi cu noua cerere
+        # Altfel, clientul (Windows) va crede că e un răspuns la altă întrebare
+        cached_record = DNSRecord.parse(cached_response)
+        cached_record.header.id = request.header.id
+        sock.sendto(cached_record.pack(), addr)
+        return
+
+    # Pasul 3: Dacă nu e în cache, întrebăm Google
+    print(f"[PASS] {domain} -> Întrebăm Google DNS...")
+    actual_answer = ask_upstream(data)
+    
+    if actual_answer:
+        # Salvăm în cache pentru viitor înainte de a trimite
+        add_to_cache(domain, actual_answer, ttl=60)
+        sock.sendto(actual_answer, addr)
 
 # Configurare Socket UDP
 UDP_IP = "0.0.0.0"

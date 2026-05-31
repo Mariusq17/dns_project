@@ -8,6 +8,8 @@ WORKDIR /app
 # Instalam librarii python necesare (vom folosi dnslib pentru inceput)
 RUN pip install dnslib requests fastapi uvicorn
 
+COPY . .
+
 # Expunem portul 53 (DNS) si 8000 (pentru DoH)
 EXPOSE 53/udp
 EXPOSE 8000/tcp
