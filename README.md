@@ -125,3 +125,25 @@ Monitorizarea și salvarea activității de filtrare prin jurnalizarea cererilor
 
 ### Persistența în Docker:
 Fișierul de log este salvat în volumul `/data`. Astfel, chiar dacă containerul este șters și recreat, istoricul domeniilor blocate rămâne salvat pe mașina gazdă (Windows), permițând acumularea celor 100 de intrări cerute.
+
+## Etapa 7: Analytics și Raportare (Dashboard)
+
+### Obiectiv
+Analizarea datelor colectate și generarea de statistici în timp real despre activitatea de blocking, cu identificarea marilor furnizori de tracking (Google, Facebook, Microsoft).
+
+### Detalii Implementare
+1. **Endpoint-ul `/stats`:**
+   - Am adăugat o rută specială în serverul FastAPI care servește un dashboard HTML.
+   - Aceasta funcționează ca un motor de analiză: deschide fișierul de log, parsează fiecare intrare și clasifică domeniile în categorii.
+
+2. **Identificarea Companiilor (Cerința 15):**
+   - Am implementat o logică de tip "Substring Matching" pentru a identifica apartenența domeniilor.
+   - Exemple: `doubleclick.net` -> Google, `fbcdn.net` -> Facebook, etc.
+   - Această metodă acoperă o gamă largă de subdomenii folosite pentru tracking și reclame.
+
+3. **Vizualizarea Datelor:**
+   - Pentru un aspect profesional, dashboard-ul utilizează librăria **Chart.js** (via CDN) pentru a genera un grafic de tip "Pie Chart" (plăcintă).
+   - Top-ul celor mai blocate domenii este calculat folosind `collections.Counter`, oferind o perspectivă rapidă asupra celor mai agresivi trackeri din rețea.
+
+### Rezultat:
+Accesând `http://localhost:8000/stats`, utilizatorul poate vedea exact ce companii sunt blocate cel mai frecvent, îndeplinind cerința de obținere a statisticilor pentru minim 100 de intrări.

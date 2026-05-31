@@ -5,6 +5,8 @@ import uvicorn
 from datetime import datetime
 from fastapi import FastAPI, Request, Response
 from dnslib import DNSRecord, QTYPE, RR, A
+from fastapi.responses import HTMLResponse # Pentru a trimite pagina web
+from collections import Counter # Pentru a număra rapid domeniile
 
 # --- 1. CONFIGURARE ȘI VARIABILE GLOBALE ---
 BLOCKLIST_FILE = "/data/adlist.txt"
@@ -138,6 +140,105 @@ def run_udp_server():
                 udp_sock.sendto(response, addr)
         except Exception as e:
             print(f"[UDP CRITICAL ERROR] {e}")
+
+# --- MODULUL DE STATISTICI (Modular) ---
+
+def analyze_logs():
+    """Citește log-ul și returnează statistici pe companii"""
+    stats = {
+        "Google": 0,
+        "Facebook/Meta": 0,
+        "Microsoft": 0,
+        "Altele": 0,
+        "Total": 0
+    }
+    all_blocked = []
+
+    try:
+        with open(LOG_FILE, "r") as f:
+            for line in f:
+                # Extragem domeniul din linia de log (format: TIMESTAMP - BLOCKED - DOMAIN)
+                parts = line.strip().split(" - ")
+                if len(parts) < 3: continue
+                
+                domain = parts[2].lower()
+                all_blocked.append(domain)
+                stats["Total"] += 1
+
+                # Logica de identificare a companiei (Cerința 15)
+                if any(x in domain for x in ["google", "doubleclick", "youtube", "gstatic"]):
+                    stats["Google"] += 1
+                elif any(x in domain for x in ["facebook", "fbcd", "instagram", "fb"]):
+                    stats["Facebook/Meta"] += 1
+                elif any(x in domain for x in ["microsoft", "bing", "msn", "office"]):
+                    stats["Microsoft"] += 1
+                else:
+                    stats["Altele"] += 1
+        
+        # Luăm top 5 cele mai blocate domenii
+        top_domains = Counter(all_blocked).most_common(5)
+        return stats, top_domains
+    except FileNotFoundError:
+        return None, None
+
+# --- ENDPOINT-UL PENTRU PAGINA DE STATISTICI ---
+
+@app.get("/stats", response_class=HTMLResponse)
+async def get_stats_page():
+    stats, top_domains = analyze_logs()
+    
+    if not stats:
+        return "<html><body><h1>Nu există date de logare încă.</h1></body></html>"
+
+    # Aici este partea de HTML/CSS (generată, dar integrată de tine)
+    html_content = f"""
+    <html>
+        <head>
+            <title>DNS Ad-Blocker Stats</title>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+                body {{ font-family: sans-serif; background: #f4f4f9; padding: 20px; }}
+                .container {{ max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+                h1 {{ color: #333; text-align: center; }}
+                .stats-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }}
+                .card {{ border: 1px solid #ddd; padding: 15px; border-radius: 8px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>DNS Block Analytics</h1>
+                <div class="stats-grid">
+                    <div class="card">
+                        <h3>Sumar Companii</h3>
+                        <canvas id="companyChart"></canvas>
+                    </div>
+                    <div class="card">
+                        <h3>Top 5 Domenii Blocate</h3>
+                        <ul>
+                            {"".join([f"<li>{d[0]} ({d[1]} ori)</li>" for d in top_domains])}
+                        </ul>
+                        <p><strong>Total Cereri Blocate: {stats['Total']}</strong></p>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+                const ctx = document.getElementById('companyChart').getContext('2d');
+                new Chart(ctx, {{
+                    type: 'pie',
+                    data: {{
+                        labels: ['Google', 'Facebook/Meta', 'Microsoft', 'Altele'],
+                        datasets: [{{
+                            data: [{stats['Google']}, {stats['Facebook/Meta']}, {stats['Microsoft']}, {stats['Altele']}],
+                            backgroundColor: ['#4285F4', '#1877F2', '#F25022', '#999']
+                        }}]
+                    }}
+                }});
+            </script>
+        </body>
+    </html>
+    """
+    return html_content
 
 # --- 6. LANSARE ORCHESTRAȚIE ---
 

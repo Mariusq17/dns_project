@@ -2,3 +2,4 @@ doubleclick.net
 ads.google.com
 track.evil-tracker.com
 facebook.com
+bing.com
