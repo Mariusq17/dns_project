@@ -43,3 +43,25 @@ Filtrarea cererilor DNS pe baza unei liste predefinite de domenii (Ad-list) și 
 3. **Răspunsul DNS:**
    - Dacă domeniul este blocat, generăm un nou pachet DNS (Reply) care conține un record de tip **A** cu valoarea `0.0.0.0`.
    - Acest IP este o destinație "moartă", ceea ce face ca browserul sau aplicația client să renunțe imediat la încărcarea resursei respective.
+
+   ## Etapa 3: Implementarea Mecanismului de Recursivitate (Forwarding)
+
+### Obiectiv
+Asigurarea funcționalității de rezoluție DNS pentru domeniile legitime (care nu se află în blocklist), prin interogarea unor servere DNS upstream (ex: Google DNS - 8.8.8.8).
+
+### Detalii Implementare
+1. **Apeluri Recursive (Recursive Queries):**
+   - În momentul în care un domeniu primește "PASS" de la filtrul de blocare, serverul nostru preia rolul de client DNS.
+   - Am implementat funcția `ask_upstream(data)`, care deschide un nou socket UDP temporar și trimite pachetul binar original către serverul `8.8.8.8` pe portul 53.
+
+2. **Gestiunea Socket-urilor:**
+   - Serverul principal rămâne deschis pentru a asculta noi cereri, în timp ce interogarea externă este gestionată separat.
+   - Am implementat un mecanism de **Timeout** (2 secunde) pentru cererile către internet, pentru a preveni blocarea serverului nostru în cazul în care conexiunea externă este lentă sau indisponibilă.
+
+3. **Transparent Proxying:**
+   - O particularitate a acestei implementări este că serverul nostru nu mai parsează din nou răspunsul primit de la Google.
+   - Deoarece răspunsul de la `8.8.8.8` este deja un pachet DNS valid și complet, serverul nostru îl retransmite (forward) direct către clientul inițial (Windows/Browser). Aceasta este o metodă eficientă și rapidă de operare.
+
+### Verificare Proiect
+- **Domeniu Blocat (facebook.com):** Serverul răspunde local cu `0.0.0.0`, blocând accesul.
+- **Domeniu Legitim (youtube.com):** Serverul trimite cererea la Google, primește IP-urile reale ale YouTube și le trimite înapoi la client. Rezultatul este vizibil instant în terminal prin comanda `nslookup`.

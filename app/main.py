@@ -19,6 +19,26 @@ def load_blocklist():
 
 blocked_domains = load_blocklist()
 
+
+def ask_upstream(data):
+    """Trimite cererea DNS către un server extern (Google DNS)"""
+    upstream_server = "8.8.8.8"
+    upstream_port = 53
+    
+    # Cream un socket UDP nou pentru a vorbi cu Google
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(2.0) # Nu așteptăm mai mult de 2 secunde după Google
+        try:
+            # Trimitem exact pachetul binar primit de la clientul nostru
+            sock.sendto(data, (upstream_server, upstream_port))
+            # Primim răspunsul binar de la Google
+            answer, _ = sock.recvfrom(1024)
+            return answer
+        except socket.timeout:
+            print("[EROARE] Google DNS nu a răspuns la timp.")
+            return None
+
+
 def handle_dns_request(data, addr, sock):
     # Parsăm pachetul binar primit
     request = DNSRecord.parse(data)
@@ -39,8 +59,16 @@ def handle_dns_request(data, addr, sock):
         # Trimitem pachetul binar înapoi la client
         sock.sendto(reply.pack(), addr)
     else:
-        print(f"[PASS] Domeniul {domain} nu este în listă (Momentan nu facem nimic).")
-        # Aici va veni logica de recursivitate la pasul următor
+        # --- AICI ESTE MODIFICAREA ---
+        print(f"[PASS] {domain} -> Întrebăm Google DNS...")
+        
+        # Facem cererea recursivă
+        actual_answer = ask_upstream(data)
+        
+        if actual_answer:
+            # Trimitem răspunsul primit de la Google direct înapoi la client
+            sock.sendto(actual_answer, addr)
+        # -----------------------------
 
 # Configurare Socket UDP
 UDP_IP = "0.0.0.0"
