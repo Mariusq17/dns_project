@@ -106,3 +106,22 @@ Extinderea funcționalității serverului pentru a suporta cereri prin protocolu
 ### Cum se testează:
 - **UDP:** `nslookup google.com 127.0.0.1`
 - **DoH:** `curl -X POST http://localhost:8000/dns-query --data-binary @pachet_dns_exemplu` (Sau configurarea unui browser precum Firefox să folosească acest URL ca Provider DoH).
+
+## Etapa 6: Persistența Datelor și Logging-ul Modular
+
+### Obiectiv
+Monitorizarea și salvarea activității de filtrare prin jurnalizarea cererilor blocate într-un fișier persistent pentru analize statistice ulterioare.
+
+### Detalii Implementare
+1. **Arhitectură Modulară de Logging:**
+   - Am implementat funcția `log_blocked_event(domain)`, separată de logica principală de rezoluție DNS. Aceasta permite modificarea formatului de logare (ex: trecerea de la fișier text la bază de date) fără a afecta funcționarea serverului DNS.
+   
+2. **Thread-Safety (Gestiunea concurenței):**
+   - Deoarece avem două servere (UDP și HTTP) care rulează simultan, există riscul ca ambele să încerce să scrie în fișierul de log în aceeași milisecundă.
+   - Am utilizat `threading.Lock()` pentru a crea o "secțiune critică". Doar un singur thread poate deține "cheia" fișierului de log la un moment dat, prevenind coruperea datelor (race conditions).
+
+3. **Formatul Jurnalului:**
+   - Fiecare intrare conține un timestamp precis, statusul (`BLOCKED`) și numele domeniului. Acest format facilitează parsarea ulterioară pentru generarea de statistici.
+
+### Persistența în Docker:
+Fișierul de log este salvat în volumul `/data`. Astfel, chiar dacă containerul este șters și recreat, istoricul domeniilor blocate rămâne salvat pe mașina gazdă (Windows), permițând acumularea celor 100 de intrări cerute.
