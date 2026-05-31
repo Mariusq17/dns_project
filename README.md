@@ -86,3 +86,23 @@ Reducerea latenței și a numărului de cereri către serverele DNS externe prin
 
 Mecanismul de caching actual returnează pachetul binar stocat indiferent de tipul query-ului (A sau AAAA). Acest lucru poate duce la afișarea duplicată a IP-urilor în utilitare precum nslookup, însă nu afectează navigarea web propriu-zisă.
 
+## Etapa 5: Integrarea DNS over HTTPS (DoH) și Multithreading
+
+### Obiectiv
+Extinderea funcționalității serverului pentru a suporta cereri prin protocolul modern DoH (RFC 8484) și rularea simultană a serviciilor UDP și HTTP.
+
+### Detalii Implementare
+1. **Arhitectura Multithreading:**
+   - Deoarece Python execută codul secvențial, am utilizat modulul `threading` pentru a porni serverul UDP într-un fir de execuție secundar.
+   - Serverul web (FastAPI) rulează în firul principal, gestionând conexiunile DoH pe portul 8000.
+
+2. **Endpoint DoH (DNS over HTTPS):**
+   - Am creat ruta `/dns-query` care acceptă cereri de tip `POST`.
+   - Conform standardului, cererea conține pachetul DNS binar în corpul mesajului HTTP, iar răspunsul este trimis cu header-ul `Content-Type: application/dns-message`.
+
+3. **Refactorizarea Logicii Centralizate:**
+   - Pentru a evita duplicarea codului, am extras logica de procesare (Blocklist -> Cache -> Upstream) într-o funcție unică `process_dns_query`. Aceasta asigură că politicile de filtrare și caching sunt aplicate identic, indiferent de modul în care a fost primită cererea (UDP sau HTTPS).
+
+### Cum se testează:
+- **UDP:** `nslookup google.com 127.0.0.1`
+- **DoH:** `curl -X POST http://localhost:8000/dns-query --data-binary @pachet_dns_exemplu` (Sau configurarea unui browser precum Firefox să folosească acest URL ca Provider DoH).
