@@ -65,3 +65,4 @@ Asigurarea funcționalității de rezoluție DNS pentru domeniile legitime (care
 ### Verificare Proiect
 - **Domeniu Blocat (facebook.com):** Serverul răspunde local cu `0.0.0.0`, blocând accesul.
 - **Domeniu Legitim (youtube.com):** Serverul trimite cererea la Google, primește IP-urile reale ale YouTube și le trimite înapoi la client. Rezultatul este vizibil instant în terminal prin comanda `nslookup`.
+
