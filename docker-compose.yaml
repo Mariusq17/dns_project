@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  dns-server:
+    build: .
+    container_name: custom-dns-server
+    volumes:
+      - ./app:/app
+      - ./data:/data
+    ports:
+      - "53:53/udp"   # DNS Standard
+      - "8000:8000/tcp" # Viitorul DoH
+    restart: always
