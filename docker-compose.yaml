@@ -41,7 +41,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       # Aici setezi IP-ul tau de acasa ca sa ai voie sa faci cereri pe UDP 53
-      - ALLOWED_IPS=127.0.0.1,109.166.130.191,109.102.255.9
+      - ALLOWED_IPS=127.0.0.1,IP_TAU_DE_ACASA_AICI
       # Credentiale Panou Admin
       - ADMIN_USER=admin
       - ADMIN_PASS=superparola123
