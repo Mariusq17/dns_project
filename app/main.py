@@ -144,7 +144,8 @@ def process_dns_query(data):
 # --- 6. SERVERE API / HTTP ---
 app = FastAPI()
 security = HTTPBasic()
-templates = Jinja2Templates(directory="app/templates")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, ADMIN_USER)
