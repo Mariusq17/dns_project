@@ -173,8 +173,10 @@ def run_udp_server():
     print("[INFO] Server UDP pornit.")
     while True:
         data, addr = sock.recvfrom(512)
+        print(f"[DEBUG] Cerere primita de la IP-ul: {addr[0]}", flush=True)
         # Filtram cererile DNS folosind Whitelist-ul
         if addr[0] not in ALLOWED_IPS and "*" not in ALLOWED_IPS:
+            print(f"[DEBUG] IP-ul {addr[0]} a fost RESPINS de whitelist.", flush=True)
             continue
         res = process_dns_query(data)
         if res: sock.sendto(res, addr)
