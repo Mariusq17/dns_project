@@ -108,7 +108,7 @@ def ask_upstream(data):
         sock.settimeout(2.0)
         try:
             sock.sendto(data, (upstream_server, 53))
-            answer, _ = sock.recvfrom(1024)
+            answer, _ = sock.recvfrom(4096)
             return answer
         except: return None
 
@@ -126,9 +126,10 @@ def process_dns_query(data):
             reply.add_answer(RR(rname=request.q.qname, rtype=QTYPE.A, rclass=1, ttl=60, rdata=A("0.0.0.0")))
             return reply.pack()
 
-        # Verificam daca raspunsul este deja in cache
-        if domain in dns_cache:
-            cached_data, expiry = dns_cache[domain]
+        # Verificam daca raspunsul este deja in cache (Cheia trebuie sa includa si Tipul cererii!)
+        cache_key = f"{domain}_{qtype}"
+        if cache_key in dns_cache:
+            cached_data, expiry = dns_cache[cache_key]
             if time.time() < expiry:
                 res = DNSRecord.parse(cached_data)
                 res.header.id = query_id
@@ -137,7 +138,7 @@ def process_dns_query(data):
         # Intrebam serverul extern (upstream) daca nu gasim in cache
         response = ask_upstream(data)
         if response:
-            dns_cache[domain] = (response, time.time() + 60)
+            dns_cache[cache_key] = (response, time.time() + 60)
             return response
     except: return None
 
