@@ -5,8 +5,8 @@ RUN apt update && apt install -y dnsutils iputils-ping
 
 WORKDIR /app
 
-# Instalam librarii python necesare (vom folosi dnslib pentru inceput)
-RUN pip install dnslib requests fastapi uvicorn
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

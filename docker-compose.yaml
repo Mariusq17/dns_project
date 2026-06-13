@@ -1,5 +1,33 @@
 version: '3.8'
+
 services:
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certs:/etc/nginx/certs
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    restart: always
+
+  acme-companion:
+    image: nginxproxy/acme-companion
+    container_name: nginx-proxy-acme
+    volumes_from:
+      - nginx-proxy
+    volumes:
+      - certs:/etc/nginx/certs:rw
+      - acme:/etc/acme.sh
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      # Adresa ta de email pentru recuperarea certificatului (optional, dar recomandat)
+      - DEFAULT_EMAIL=admin@reteleproject.software
+    restart: always
+
   dns-server:
     build: .
     container_name: custom-dns-server
@@ -7,8 +35,23 @@ services:
       - ./app:/app
       - ./data:/data
     ports:
-      - "53:53/udp"   # DNS Standard
-      - "8000:8000" # Viitorul DoH
+      - "53:53/udp"   # Port DNS Standard UDP
+      # Nu expunem portul 8000 public direct, el va trece prin nginx
     restart: always
     environment:
       - PYTHONUNBUFFERED=1
+      # Aici setezi IP-ul tau de acasa ca sa ai voie sa faci cereri pe UDP 53
+      - ALLOWED_IPS=127.0.0.1,109.166.130.191,109.102.255.9
+      # Credentiale Panou Admin
+      - ADMIN_USER=admin
+      - ADMIN_PASS=superparola123
+      # Configuratii pentru Nginx Proxy si Let's Encrypt
+      - VIRTUAL_HOST=reteleproject.software
+      - VIRTUAL_PORT=8000
+      - LETSENCRYPT_HOST=reteleproject.software
+
+volumes:
+  certs:
+  vhost:
+  html:
+  acme:

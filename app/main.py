@@ -2,70 +2,96 @@ import socket
 import time
 import threading
 import uvicorn
-import requests  # NECESAR: Adaugă în Dockerfile
+import requests
+import os
+import json
+import secrets
 from datetime import datetime
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.templating import Jinja2Templates
 from collections import Counter
 from dnslib import DNSRecord, QTYPE, RR, A
 
 # --- 1. CONFIGURARE ---
-BLOCKLIST_FILE = "/data/adlist.txt"
-LOG_FILE = "/data/blocked_queries.log"
-# URL-ul către lista RAW (format hosts)
+# Fallback pentru folderul de date: '/data' (Docker) sau 'data' (Local Windows)
+DATA_DIR = "/data" if os.path.isdir("/data") else "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+BLOCKLIST_FILE = f"{DATA_DIR}/adlist.txt"
+LOG_FILE = f"{DATA_DIR}/blocked_queries.log"
+ALLOWED_IPS_FILE = f"{DATA_DIR}/allowed_ips.json"
 REMOTE_LIST_URL = "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt"
 
+# Variabile de mediu pentru panoul de control
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
+
+ALLOWED_IPS = set(["127.0.0.1"])
 dns_cache = {}
 log_lock = threading.Lock()
 
-# --- 2. MODUL DESCĂRCARE ȘI ÎNCĂRCARE LISTĂ ---
-
-def load_blocklist():
-    """Descarcă lista de pe GitHub, o curăță și o încarcă în memorie."""
-    blocklist = set()
+# --- 2. PERSISTENTA IP-URI ---
+def load_allowed_ips():
+    global ALLOWED_IPS
+    # 1. Incarcam IP-urile din variabilele de mediu
+    env_ips = os.environ.get("ALLOWED_IPS", "")
+    for ip in env_ips.split(","):
+        if ip.strip(): ALLOWED_IPS.add(ip.strip())
     
-    # Pasul A: Încercăm descărcarea de pe internet
+    # 2. Incarcam IP-urile din fisierul JSON (daca exista)
+    if os.path.exists(ALLOWED_IPS_FILE):
+        try:
+            with open(ALLOWED_IPS_FILE, "r") as f:
+                saved_ips = json.load(f)
+                ALLOWED_IPS.update(saved_ips)
+        except Exception as e:
+            print(f"[ERROR] Nu am putut citi {ALLOWED_IPS_FILE}: {e}")
+
+def save_allowed_ips():
+    with log_lock:
+        try:
+            with open(ALLOWED_IPS_FILE, "w") as f:
+                json.dump(list(ALLOWED_IPS), f)
+        except Exception as e:
+            print(f"[ERROR] Nu am putut salva {ALLOWED_IPS_FILE}: {e}")
+
+# Initializare IP-uri la pornire
+load_allowed_ips()
+
+# --- 3. GESTIONARE LISTA DOMENII BLOCATE ---
+def load_blocklist():
+    blocklist = set()
     try:
-        print(f"[INFO] Se descarcă lista actualizată de la: {REMOTE_LIST_URL}")
+        print(f"[INFO] Se descarca lista de la: {REMOTE_LIST_URL}")
         response = requests.get(REMOTE_LIST_URL, timeout=15)
         if response.status_code == 200:
-            lines = response.text.splitlines()
-            for line in lines:
+            for line in response.text.splitlines():
                 line = line.strip()
-                # Ignorăm comentariile și liniile goale
-                if not line or line.startswith("#"):
-                    continue
-                
-                # Curățăm formatul "0.0.0.0 domain.com" sau "127.0.0.1 domain.com"
-                parts = line.split()
-                # Luăm ultimul element din linie (care este domeniul)
-                domain = parts[-1].lower()
+                if not line or line.startswith("#"): continue
+                domain = line.split()[-1].lower()
                 blocklist.add(domain)
             
-            # Salvăm local pentru backup
-            with open(BLOCKLIST_FILE, "w") as f:
-                f.write("\n".join(blocklist))
-            print(f"[SUCCESS] Am descărcat și curățat {len(blocklist)} domenii.")
+            # Salvam lista local pentru backup
+            with open(BLOCKLIST_FILE, "w") as f: f.write("\n".join(blocklist))
+            print(f"[SUCCESS] {len(blocklist)} domenii incarcate.")
             return blocklist
     except Exception as e:
-        print(f"[⚠️ WARNING] Descărcarea a eșuat ({e}). Folosim backup-ul local.")
-
-    # Pasul B: Dacă internetul pică, citim fișierul local
+        print(f"[WARNING] Descarcare esuata. {e}")
+    
+    # Incarcare din backup local in caz de eroare la descarcare
     try:
         with open(BLOCKLIST_FILE, "r") as f:
             for line in f:
-                domain = line.strip().lower()
-                if domain: blocklist.add(domain)
-        print(f"[INFO] Backup local încărcat: {len(blocklist)} domenii.")
-    except FileNotFoundError:
-        print("[EROARE] Nicio listă de domenii nu a putut fi încărcată!")
+                if line.strip(): blocklist.add(line.strip().lower())
+    except: pass
     
     return blocklist
 
 blocked_domains = load_blocklist()
 
-# --- 3. MODUL LOGGING ---
-
+# --- 4. LOGGING ---
 def log_blocked_event(domain, qtype):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} - BLOCKED - {domain} (Type: {qtype})\n"
@@ -75,8 +101,7 @@ def log_blocked_event(domain, qtype):
                 f.write(log_entry)
         except: pass
 
-# --- 4. LOGICĂ DNS ȘI RECURSIVITATE ---
-
+# --- 5. LOGICA DNS ---
 def ask_upstream(data):
     upstream_server = "8.8.8.8"
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -94,15 +119,14 @@ def process_dns_query(data):
         query_id = request.header.id
         qtype = request.q.qtype
 
-        # 1. Blocklist
+        # Verificam daca domeniul este in lista de blocare
         if domain.lower() in blocked_domains:
-            print(f"[BLOCK] {domain}")
             log_blocked_event(domain, qtype)
             reply = request.reply()
             reply.add_answer(RR(rname=request.q.qname, rtype=QTYPE.A, rclass=1, ttl=60, rdata=A("0.0.0.0")))
             return reply.pack()
 
-        # 2. Cache
+        # Verificam daca raspunsul este deja in cache
         if domain in dns_cache:
             cached_data, expiry = dns_cache[domain]
             if time.time() < expiry:
@@ -110,16 +134,28 @@ def process_dns_query(data):
                 res.header.id = query_id
                 return res.pack()
 
-        # 3. Upstream
+        # Intrebam serverul extern (upstream) daca nu gasim in cache
         response = ask_upstream(data)
         if response:
             dns_cache[domain] = (response, time.time() + 60)
             return response
     except: return None
 
-# --- 5. SERVERE (UDP & DoH) ---
-
+# --- 6. SERVERE API / HTTP ---
 app = FastAPI()
+security = HTTPBasic()
+templates = Jinja2Templates(directory="app/templates")
+
+def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, ADMIN_USER)
+    correct_password = secrets.compare_digest(credentials.password, ADMIN_PASS)
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 @app.post("/dns-query")
 @app.get("/dns-query")
@@ -129,63 +165,86 @@ async def doh_endpoint(request: Request):
     res = process_dns_query(body)
     return Response(content=res, media_type="application/dns-message") if res else Response(status_code=500)
 
+# Serverul UDP standard pentru DNS (port 53)
 def run_udp_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", 53))
+    print("[INFO] Server UDP pornit.")
     while True:
         data, addr = sock.recvfrom(512)
+        # Filtram cererile DNS folosind Whitelist-ul
+        if addr[0] not in ALLOWED_IPS and "*" not in ALLOWED_IPS:
+            continue
         res = process_dns_query(data)
         if res: sock.sendto(res, addr)
 
-# --- 6. STATISTICI ---
+# --- 7. ADMIN DASHBOARD ---
 
-def analyze_logs():
-    stats = {"Google": 0, "Facebook/Meta": 0, "Microsoft": 0, "Altele": 0, "Total": 0}
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard(request: Request, username: str = Depends(get_current_username)):
+    return templates.TemplateResponse(request=request, name="admin.html")
+
+@app.get("/admin/api/stats")
+async def api_stats(username: str = Depends(get_current_username)):
     all_blocked = []
+    total = 0
     try:
-        with open(LOG_FILE, "r") as f:
-            for line in f:
-                parts = line.strip().split(" - ")
-                if len(parts) < 3: continue
-                domain = parts[2].split(" (")[0].lower()
-                all_blocked.append(domain)
-                stats["Total"] += 1
-                if any(x in domain for x in ["google", "doubleclick", "youtube"]): stats["Google"] += 1
-                elif any(x in domain for x in ["facebook", "fbcd", "instagram"]): stats["Facebook/Meta"] += 1
-                elif any(x in domain for x in ["microsoft", "bing", "msn"]): stats["Microsoft"] += 1
-                else: stats["Altele"] += 1
-        return stats, Counter(all_blocked).most_common(5)
-    except: return None, None
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r") as f:
+                for line in f:
+                    parts = line.strip().split(" - ")
+                    if len(parts) >= 3:
+                        domain = parts[2].split(" (")[0].lower()
+                        all_blocked.append(domain)
+                        total += 1
+    except: pass
+    
+    # Generam top 10 domenii blocate
+    top_10 = [{"domain": k, "count": v} for k, v in Counter(all_blocked).most_common(10)]
+    return {"total": total, "top": top_10}
 
-@app.get("/stats", response_class=HTMLResponse)
-async def get_stats_page():
-    stats, top = analyze_logs()
-    if not stats: return "<h1>Nu există date încă.</h1>"
-    return f"""
-    <html>
-        <head><script src="https://cdn.jsdelivr.net/npm/chart.js"></script></head>
-        <body style="font-family:sans-serif; padding:20px;">
-            <h1>DNS Analytics Dashboard</h1>
-            <div style="display:flex; gap:40px;">
-                <div style="width:300px;"><canvas id="myChart"></canvas></div>
-                <div>
-                    <h3>Top 5 Blocate:</h3>
-                    <ul>{"".join([f"<li>{d[0]}: {d[1]}</li>" for d in top])}</ul>
-                    <p>Total: {stats['Total']}</p>
-                </div>
-            </div>
-            <script>
-                new Chart(document.getElementById('myChart'), {{
-                    type: 'pie',
-                    data: {{
-                        labels: ['Google', 'Facebook', 'Microsoft', 'Altele'],
-                        datasets: [{{ data: [{stats['Google']}, {stats['Facebook/Meta']}, {stats['Microsoft']}, {stats['Altele']}], backgroundColor: ['blue', 'navy', 'orange', 'grey'] }}]
-                    }}
-                }});
-            </script>
-        </body>
-    </html>
-    """
+@app.get("/admin/api/ips")
+async def api_get_ips(username: str = Depends(get_current_username)):
+    return list(ALLOWED_IPS)
+
+@app.post("/admin/api/ips")
+async def api_add_ip(request: Request, username: str = Depends(get_current_username)):
+    data = await request.json()
+    ip = data.get("ip")
+    if ip:
+        ALLOWED_IPS.add(ip.strip())
+        save_allowed_ips()
+        return {"status": "success"}
+    raise HTTPException(status_code=400, detail="Invalid IP")
+
+@app.delete("/admin/api/ips/{ip}")
+async def api_delete_ip(ip: str, username: str = Depends(get_current_username)):
+    if ip in ALLOWED_IPS:
+        ALLOWED_IPS.remove(ip)
+        save_allowed_ips()
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="IP not found")
+
+@app.get("/admin/api/logs")
+async def api_get_logs(username: str = Depends(get_current_username)):
+    logs = []
+    try:
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r") as f:
+                # Citim doar ultimele 50 de cereri pentru performanta
+                lines = f.readlines()[-50:]
+                for line in reversed(lines):
+                    parts = line.strip().split(" - ")
+                    if len(parts) >= 3:
+                        domain_part = parts[2].split(" (Type: ")
+                        if len(domain_part) == 2:
+                            logs.append({
+                                "timestamp": parts[0],
+                                "domain": domain_part[0].replace("BLOCKED - ", "").strip(),
+                                "type": domain_part[1].replace(")", "")
+                            })
+    except: pass
+    return logs
 
 if __name__ == "__main__":
     threading.Thread(target=run_udp_server, daemon=True).start()

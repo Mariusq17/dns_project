@@ -1,149 +1,119 @@
-# DNS Ad-Blocker Project (Custom Implementation)
+# Retele Project: DNS Ad-Blocker over HTTPS (DoH) & Admin Shield
 
-## Etapa 1: Configurarea mediului de dezvoltare și a infrastructurii Docker
+Un sistem complet si autonom de blocare a reclamelor (Ad-Blocker DNS) inspirat din modelul Pi-hole. Proiectul filtreaza cererile DNS folosind o lista dinamica de trackere si reclame, oferind atat suport clasic DNS (UDP port 53), cat si securitate moderna prin DNS over HTTPS (DoH). 
 
-### Obiectiv
-Crearea unui mediu izolat și reproductibil folosind Docker pentru a rula un server DNS personalizat scris în Python.
+Proiectul include un **Dashboard de Administrare Premium** protejat prin parola, construit cu Tailwind CSS si Chart.js, care permite gestionarea adreselor IP premise si vizualizarea logurilor si a statisticilor in timp real.
 
-### Arhitectura Sistemului
-1. **Host (Windows/macOS):** Trimite cereri DNS pe portul 53.
-2. **Docker Compose:** Redirecționează traficul de pe portul 53 (Host) către containerul nostru.
-3. **Container (Ubuntu/Python):** Rulează scriptul `main.py` care procesează pachetele DNS.
+---
 
-### Tehnologii utilizate
-- **Docker & Docker Compose:** Pentru containerizare și orchestrare.
-- **Python 3.10:** Limbajul de programare pentru logica serverului.
-- **dnslib:** O librărie Python folosită pentru a parsa (interpreta) pachetele binare DNS.
+## 🎯 Cerintele Proiectului Indeplinite
 
-### Fișiere de configurare
-- `Dockerfile`: Definește imaginea de bază (Python slim) și instalează dependențele.
-- `docker-compose.yml`: Configurează maparea porturilor și volumele de date.
-- `app/main.py`: Punctul de intrare al aplicației care deschide un socket UDP pe portul 53.
+Acest proiect acopera integral cerintele temei "Ad Blocker DNS (over HTTPS)":
+- [x] **Aplicatie DNS Resolver:** Dezvoltata in Python (`main.py`) capabila sa parseze si sa raspunda la cereri DNS.
+- [x] **Functional (Fara a implementa tot protocolul):** Raspunde precis si eficient pentru interceptari tip A, fara bloatware.
+- [x] **Mecanism de Caching:** Pachetele rezolvate cu succes sunt salvate in memorie (`dns_cache`) pentru 60 de secunde, accelerand cererile recurente la sub 1 milisecunda.
+- [x] **Apeluri Recursive (Forwarding):** Daca un domeniu nu este nici blocat, nici in cache, serverul redirectioneaza cererea (forward) catre un upstream extern (`8.8.8.8`) si livreaza pachetul inapoi clientului original.
+- [x] **Lista Curatoriata de Reclame:** La pornire, serverul descarca automat si parseaza o [lista recunoscuta (AnudeepND)](https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt).
+- [x] **Blocare Efectiva:** Pentru orice domeniu blocat, serverul injecteaza raspunsul `0.0.0.0` (metoda "Sinkhole").
 
-### Cum funcționează (Pas cu Pas)
-1. Pornim serviciul cu `docker-compose up --build`.
-2. Scriptul Python deschide un **Socket UDP** (un canal de comunicare) pe portul 53.
-3. Când executăm `nslookup` pe host, Windows trimite un pachet binar către container.
-4. Serverul Python primește pachetul, îl decodifică și afișează domeniul cerut în consolă.
+---
 
-## Etapa 2: Implementarea Logicii de Blocking (Sinkhole)
+## 🚀 Functionalitati (Features)
 
-### Obiectiv
-Filtrarea cererilor DNS pe baza unei liste predefinite de domenii (Ad-list) și returnarea adresei `0.0.0.0` pentru acestea.
+1. **Dual Protocol (DNS & DoH):**
+   - Asculta pe UDP:53 pentru cereri DNS obisnuite.
+   - Asculta pe HTTP(S) prin ruta `/dns-query` pentru DNS-over-HTTPS, integrand un Reverse Proxy prin Nginx.
+2. **"Admin Shield" Dashboard (Port 8000 / `/admin`):**
+   - Interfata superba si responsiva (Tailwind CSS, Dark Mode).
+   - Securitate Basic Auth pe toate rutele de administrare.
+   - Grafice Live (Chart.js) cu topul domeniilor blocate.
+3. **Sistem Persistent de Whitelist (IP-uri Permise):**
+   - Protejeaza serverul de a deveni un *Open Resolver* vulnerabil atacurilor DDoS. Doar IP-urile trecute in lista permit interogari pe portul 53.
+   - IP-urile adaugate in Web UI sunt salvate in `/data/allowed_ips.json` - astfel nu se pierd la un eventual restart al VPS-ului.
+4. **Logare si Monitorizare Multithreaded:**
+   - Fir separat de executie (Thread) pentru UDP DNS si pentru serverul HTTP FastAPI. Gestiune sigura a scrierilor in fisier (`blocked_queries.log`) folosind un `threading.Lock()`.
+5. **Auto-SSL Certificate:**
+   - Integreaza `acme-companion` in Docker pentru a genera complet automat si reinnoi certificate SSL Let's Encrypt pentru domeniul aplicatiei.
 
-### Detalii Implementare
-1. **Gestionarea Listei Negre:**
-   - Lista este stocată într-un fișier extern (`/data/adlist.txt`), mapat prin Docker Volumes.
-   - La pornire, serverul încarcă domeniile într-un obiect de tip `set` în Python. Am ales `set` pentru o complexitate de căutare de **O(1)**, asigurând performanță ridicată indiferent de mărimea listei.
-   
-2. **Procesarea Cererii:**
-   - Folosim librăria `dnslib` pentru a deserializa pachetul UDP binar.
-   - Comparăm domeniul extras (`QNAME`) cu elementele din `set`.
-   
-3. **Răspunsul DNS:**
-   - Dacă domeniul este blocat, generăm un nou pachet DNS (Reply) care conține un record de tip **A** cu valoarea `0.0.0.0`.
-   - Acest IP este o destinație "moartă", ceea ce face ca browserul sau aplicația client să renunțe imediat la încărcarea resursei respective.
+---
 
-   ## Etapa 3: Implementarea Mecanismului de Recursivitate (Forwarding)
+## 🛠️ Tehnologii Utilizate
 
-### Obiectiv
-Asigurarea funcționalității de rezoluție DNS pentru domeniile legitime (care nu se află în blocklist), prin interogarea unor servere DNS upstream (ex: Google DNS - 8.8.8.8).
+### Core / Backend
+- **Python 3.10**: Logica principala.
+- **FastAPI & Uvicorn**: Framework web de inalta performanta folosit pentru panoul de admin si pentru endpoint-ul DoH (`/dns-query`).
+- **dnslib**: Librarie pentru parsarea bi-directionala a formatului binar DNS (RFC 1035).
+- **Jinja2**: Motor de randare (templating) pentru interfata HTML a panoului de admin.
+- **Requests**: Pentru extragerea (fetching-ul) dinamic al listei de adservere la initializare.
 
-### Detalii Implementare
-1. **Apeluri Recursive (Recursive Queries):**
-   - În momentul în care un domeniu primește "PASS" de la filtrul de blocare, serverul nostru preia rolul de client DNS.
-   - Am implementat funcția `ask_upstream(data)`, care deschide un nou socket UDP temporar și trimite pachetul binar original către serverul `8.8.8.8` pe portul 53.
+### Frontend
+- **Tailwind CSS (via CDN)**: Pentru o stilizare curata, design minimalist, cu suport de Dark Mode.
+- **Chart.js (via CDN)**: Vizualizarea interactiva si animata a top 10 trackere blocate.
+- **Vanilla JavaScript**: Fetch API asincron pentru preluarea de loguri si management IP fara a fi necesar un refresh al paginii (SPA feeling).
 
-2. **Gestiunea Socket-urilor:**
-   - Serverul principal rămâne deschis pentru a asculta noi cereri, în timp ce interogarea externă este gestionată separat.
-   - Am implementat un mecanism de **Timeout** (2 secunde) pentru cererile către internet, pentru a preveni blocarea serverului nostru în cazul în care conexiunea externă este lentă sau indisponibilă.
+### Infrastructura & DevOps
+- **Docker & Docker Compose**: Containerizare la cheie.
+- **Nginx-Proxy (jwilder)**: Reverse proxy automat care trimite traficul porturilor 80/443 catre containerul intern de Python (port 8000).
+- **acme-companion**: Solutie de automatizare Let's Encrypt.
 
-3. **Transparent Proxying:**
-   - O particularitate a acestei implementări este că serverul nostru nu mai parsează din nou răspunsul primit de la Google.
-   - Deoarece răspunsul de la `8.8.8.8` este deja un pachet DNS valid și complet, serverul nostru îl retransmite (forward) direct către clientul inițial (Windows/Browser). Aceasta este o metodă eficientă și rapidă de operare.
+---
 
-### Verificare Proiect
-- **Domeniu Blocat (facebook.com):** Serverul răspunde local cu `0.0.0.0`, blocând accesul.
-- **Domeniu Legitim (youtube.com):** Serverul trimite cererea la Google, primește IP-urile reale ale YouTube și le trimite înapoi la client. Rezultatul este vizibil instant în terminal prin comanda `nslookup`.
+## ⚙️ Arhitectura Sistemului
 
-## Etapa 4: Implementarea mecanismului de Caching
+1. Traficul Web (`https://domeniul.tau`) loveste containerul Nginx. Nginx-ul decripteaza SSL-ul si il trimite mai departe spre containerul `dns-server` (port 8000).
+2. Traficul DNS clasic loveste VPS-ul direct pe portul 53 UDP. Portul este mapat din VPS fix in containerul `dns-server` (port 53).
+3. In interiorul `dns-server`, scriptul `main.py` foloseste Multithreading: 
+   - *Thread 1* (FastAPI / Uvicorn): Se ocupa de rutele `/admin` si rutele DoH `/dns-query`.
+   - *Thread 2* (Socket Raw UDP): Asculta continuu portul 53, parsand pachetele cu `dnslib`.
 
-### Obiectiv
-Reducerea latenței și a numărului de cereri către serverele DNS externe prin stocarea temporară a răspunsurilor valide în memoria RAM.
+---
 
-### Detalii Implementare
-1. **Stocarea Datelor:**
-   - Am utilizat un dicționar Python (`dns_cache`) pentru a mapa numele domeniilor la pachetele binare de răspuns.
-   - Fiecare intrare în cache include un **Timestamp de expirare**, calculat pe baza adunării timpului curent (`time.time()`) cu un **TTL** (Time To Live).
+## 🏁 Ghid Pas cu Pas de Deploy (VPS Linux)
 
-2. **Logica de ID Matching:**
-   - O provocare tehnică în implementarea cache-ului DNS este potrivirea ID-ului de tranzacție. 
-   - Deoarece pachetul salvat în cache are ID-ul cererii originale, la refolosire, serverul nostru modifică header-ul pachetului binar pentru a insera ID-ul noii cereri, asigurând conformitatea cu protocolul DNS.
+### 1. Pre-conditii
+- Un domeniu web achizitionat (ex: `reteleproject.software`).
+- Domeniul are un **record DNS "A"** creat in zona sa de administrare, care pointeaza care IP-ul public al VPS-ului tau.
+- VPS cu Ubuntu/Debian pe care este instalat `docker.io` si `docker-compose`.
 
-3. **Eficiență:**
-   - Sistemul verifică mai întâi Blocklist-ul, apoi Cache-ul, și abia în ultimă instanță efectuează un apel recursiv către internet.
-   - Această ierarhie minimizează traficul de rețea și oferă timpi de răspuns sub 1ms pentru cererile repetate.
+### 2. Configurarea
+Cloneaza sau copiaza acest cod intr-un folder pe VPS (ex: `/root/dns_project`).
+Deschide fisierul `docker-compose.yaml` si configureaza:
+1. **`VIRTUAL_HOST` / `LETSENCRYPT_HOST`**: Pune numele domeniului tau.
+2. **`DEFAULT_EMAIL`**: Pune o adresa ta de mail.
+3. **`ADMIN_USER`** si **`ADMIN_PASS`**: Parola de logare in Admin Panel.
+4. **`ALLOWED_IPS`**: Introdu adresa `127.0.0.1` si, esential, **Adresa IP Publica a locatiei tale de acasa** despartite prin virgula, pentru a-ti oferi permisiunea de a folosi serverul.
 
-Mecanismul de caching actual returnează pachetul binar stocat indiferent de tipul query-ului (A sau AAAA). Acest lucru poate duce la afișarea duplicată a IP-urilor în utilitare precum nslookup, însă nu afectează navigarea web propriu-zisă.
+### 3. Lansarea Mediului Docker
+Intra in folderul proiectului si ruleaza:
+```bash
+docker-compose up -d --build
+```
+*Observatie:* Containerul `acme-companion` are nevoie de 1-3 minute in fundal pentru a se autentifica la Let's Encrypt si a-ti genera certificatul HTTPS valid.
 
-## Etapa 5: Integrarea DNS over HTTPS (DoH) și Multithreading
+---
 
-### Obiectiv
-Extinderea funcționalității serverului pentru a suporta cereri prin protocolul modern DoH (RFC 8484) și rularea simultană a serviciilor UDP și HTTP.
+## 🧪 Ghid de Testare si Utilizare
 
-### Detalii Implementare
-1. **Arhitectura Multithreading:**
-   - Deoarece Python execută codul secvențial, am utilizat modulul `threading` pentru a porni serverul UDP într-un fir de execuție secundar.
-   - Serverul web (FastAPI) rulează în firul principal, gestionând conexiunile DoH pe portul 8000.
+### 1. Testarea Admin Panel-ului
+- Acceseaza **`https://[domeniul_tau]/admin`** in browser.
+- O fereastra pop-up de login Basic Auth va aparea. Introdu credentialele (ex: `admin` / `superparola123`).
+- In sectiunea "IP Whitelist" testeaza adaugarea unui IP nou. In spate, acest IP este salvat direct si se aplica in timp real peste filtrul de socket UDP.
+- In sectiunea "Live Logs" vei vedea ultimele 50 de atacuri sau interogari blocate.
 
-2. **Endpoint DoH (DNS over HTTPS):**
-   - Am creat ruta `/dns-query` care acceptă cereri de tip `POST`.
-   - Conform standardului, cererea conține pachetul DNS binar în corpul mesajului HTTP, iar răspunsul este trimis cu header-ul `Content-Type: application/dns-message`.
+### 2. Testarea DNS Clasic (de acasa)
+Asigura-te ca IP-ul tau curent este listat in Admin Panel la sectiunea IP Whitelist. Daca e acolo, deschide un terminal (pe Windows) si ruleaza:
+```bash
+# Testeaza un domeniu legitim
+nslookup google.com [IP_VPS_SAU_DOMENIU]
 
-3. **Refactorizarea Logicii Centralizate:**
-   - Pentru a evita duplicarea codului, am extras logica de procesare (Blocklist -> Cache -> Upstream) într-o funcție unică `process_dns_query`. Aceasta asigură că politicile de filtrare și caching sunt aplicate identic, indiferent de modul în care a fost primită cererea (UDP sau HTTPS).
+# Testeaza un domeniu blocat (din lista reclamelor)
+nslookup doubleclick.net [IP_VPS_SAU_DOMENIU]
+# Asteptari: Va returna adresa 0.0.0.0
+```
 
-### Cum se testează:
-- **UDP:** `nslookup google.com 127.0.0.1`
-- **DoH:** `curl -X POST http://localhost:8000/dns-query --data-binary @pachet_dns_exemplu` (Sau configurarea unui browser precum Firefox să folosească acest URL ca Provider DoH).
-
-## Etapa 6: Persistența Datelor și Logging-ul Modular
-
-### Obiectiv
-Monitorizarea și salvarea activității de filtrare prin jurnalizarea cererilor blocate într-un fișier persistent pentru analize statistice ulterioare.
-
-### Detalii Implementare
-1. **Arhitectură Modulară de Logging:**
-   - Am implementat funcția `log_blocked_event(domain)`, separată de logica principală de rezoluție DNS. Aceasta permite modificarea formatului de logare (ex: trecerea de la fișier text la bază de date) fără a afecta funcționarea serverului DNS.
-   
-2. **Thread-Safety (Gestiunea concurenței):**
-   - Deoarece avem două servere (UDP și HTTP) care rulează simultan, există riscul ca ambele să încerce să scrie în fișierul de log în aceeași milisecundă.
-   - Am utilizat `threading.Lock()` pentru a crea o "secțiune critică". Doar un singur thread poate deține "cheia" fișierului de log la un moment dat, prevenind coruperea datelor (race conditions).
-
-3. **Formatul Jurnalului:**
-   - Fiecare intrare conține un timestamp precis, statusul (`BLOCKED`) și numele domeniului. Acest format facilitează parsarea ulterioară pentru generarea de statistici.
-
-### Persistența în Docker:
-Fișierul de log este salvat în volumul `/data`. Astfel, chiar dacă containerul este șters și recreat, istoricul domeniilor blocate rămâne salvat pe mașina gazdă (Windows), permițând acumularea celor 100 de intrări cerute.
-
-## Etapa 7: Analytics și Raportare (Dashboard)
-
-### Obiectiv
-Analizarea datelor colectate și generarea de statistici în timp real despre activitatea de blocking, cu identificarea marilor furnizori de tracking (Google, Facebook, Microsoft).
-
-### Detalii Implementare
-1. **Endpoint-ul `/stats`:**
-   - Am adăugat o rută specială în serverul FastAPI care servește un dashboard HTML.
-   - Aceasta funcționează ca un motor de analiză: deschide fișierul de log, parsează fiecare intrare și clasifică domeniile în categorii.
-
-2. **Identificarea Companiilor (Cerința 15):**
-   - Am implementat o logică de tip "Substring Matching" pentru a identifica apartenența domeniilor.
-   - Exemple: `doubleclick.net` -> Google, `fbcdn.net` -> Facebook, etc.
-   - Această metodă acoperă o gamă largă de subdomenii folosite pentru tracking și reclame.
-
-3. **Vizualizarea Datelor:**
-   - Pentru un aspect profesional, dashboard-ul utilizează librăria **Chart.js** (via CDN) pentru a genera un grafic de tip "Pie Chart" (plăcintă).
-   - Top-ul celor mai blocate domenii este calculat folosind `collections.Counter`, oferind o perspectivă rapidă asupra celor mai agresivi trackeri din rețea.
-
-### Rezultat:
-Accesând `http://localhost:8000/stats`, utilizatorul poate vedea exact ce companii sunt blocate cel mai frecvent, îndeplinind cerința de obținere a statisticilor pentru minim 100 de intrări.
+### 3. Testarea DNS over HTTPS (DoH)
+Cel mai puternic mod de a folosi serverul este DoH direct din browser (unde nu ai nevoie ca IP-ul tau sa fie in Whitelist, deoarece Nginx expune doar HTTP si tu beneficiezi de securitate prin criptare):
+- Intra in **Mozilla Firefox** > **Settings** > **Privacy & Security** > **DNS over HTTPS**.
+- Alege "Max Protection" si la Provider alege "Custom".
+- Introdu adresa URL a serverului tau: `https://[domeniul_tau]/dns-query`
+- Gata! Navigheaza pe internet in mod securizat. Reclamele, pop-up-urile invizibile si trackerele vor incepe instantaneu sa apara ca "Blocked" in Admin Panel-ul tau.
